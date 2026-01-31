@@ -30,7 +30,7 @@ set -euo pipefail
 # Optional env vars:
 #   REPORT_DIR=.secretcheck
 #   SKIP_TRUFFLEHOG=1
-#   SKIP_BONUS=1
+#   RUN_BONUS=1
 #
 # Exit codes:
 #   0  success (all clean)
@@ -39,7 +39,7 @@ set -euo pipefail
 
 REPORT_DIR="${REPORT_DIR:-.secretcheck}"
 SKIP_TRUFFLEHOG="${SKIP_TRUFFLEHOG:-0}"
-SKIP_BONUS="${SKIP_BONUS:-0}"
+RUN_BONUS="${RUN_BONUS:-0}"
 
 FAIL_ALL=0
 PRINT_ALLOWLISTED=0
@@ -50,6 +50,7 @@ for arg in "${@:-}"; do
     --fail-all) FAIL_ALL=1 ;;
     --print-allowlisted) PRINT_ALLOWLISTED=1 ;;
     --init-allowlist) INIT_ALLOWLIST=1 ;;
+    --bonus) RUN_BONUS=1 ;;
     *) ;;
   esac
 done
@@ -397,8 +398,8 @@ fi
 # --------------------------------------------------
 # Bonus checks
 # --------------------------------------------------
-if [[ "$SKIP_BONUS" == "1" ]]; then
-  echo "SKIP: bonus checks"
+if [[ "$RUN_BONUS" != "1" ]]; then
+  echo "SKIP: bonus checks (opt-in via --bonus or RUN_BONUS=1)"
   echo
 else
   # Step 3: keyword grep in working tree
