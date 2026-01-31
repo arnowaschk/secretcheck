@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# prerequisites:
 # apt install gitleaks
 # pipx install trufflehog
 
-# secretcheck.sh
-#
 # Modes:
 #   Interactive (default):
 #     ./secretcheck.sh
-#       -> stops on non-allowlisted findings, asks you to clean, re-runs step until clean
+#       -> stops on findings, asks to "retry" (re-runs step after some fixes) or "skip" (goes to next step)
 #
 #   CI / testsuite mode:
 #     ./secretcheck.sh --fail-all
@@ -19,6 +16,8 @@ set -euo pipefail
 # Allowlist:
 #   .secretcheck_allowed in repo root (gitignore-style patterns), BUT as a WHITELIST.
 #   Allowlist is re-read on every step run (including repeats).
+#   Use this ONLY for known false positives (e.g., docs/examples, test fixtures),
+#   never for real secrets.
 #
 # Extras:
 #   --print-allowlisted
@@ -27,10 +26,10 @@ set -euo pipefail
 #   --init-allowlist
 #     creates .secretcheck_allowed with a commented template if it doesn't exist
 #
-# Optional env vars:
+# Optional env vars and their defaults:
 #   REPORT_DIR=.secretcheck
-#   SKIP_TRUFFLEHOG=1
-#   RUN_BONUS=1
+#   SKIP_TRUFFLEHOG=0
+#   RUN_BONUS=0
 #
 # Exit codes:
 #   0  success (all clean)
@@ -44,6 +43,7 @@ RUN_BONUS="${RUN_BONUS:-0}"
 FAIL_ALL=0
 PRINT_ALLOWLISTED=0
 INIT_ALLOWLIST=0
+SKIPPED_ANY=0
 
 for arg in "${@:-}"; do
   case "$arg" in
@@ -62,12 +62,21 @@ need_cmd() { command -v "$1" >/dev/null 2>&1; }
 pause_for_user() {
   echo
   echo "There were findings (not allowlisted)."
-  echo "1) Rotate secrets if any are real (revoke/replace)."
-  echo "2) Clean the repo (remove secrets, rewrite history if needed)."
-  echo "3) Optionally add false-positive paths to .secretcheck_allowed."
+  echo "You should consider:"
+  echo "1) Rotating secrets if any are real (revoke/replace)."
+  echo "2) Cleaning the repo (remove secrets, rewrite history if needed)."
+  echo "3) Or adding false-positive paths to .secretcheck_allowed."
   echo
-  read -r -p "Type 'continue' to re-run this step, anything else to abort: " ans
-  [[ "$ans" == "continue" ]] || exit 3
+  echo "Repo: $REPO_ROOT"
+  echo
+  read -r -p "Type 'retry' to re-run this step, 'skip' to skip it, anything else to abort: " ans
+  if [[ "$ans" == "retry" ]]; then
+    return 0
+  elif [[ "$ans" == "skip" ]]; then
+    return 2
+  else
+    exit 3
+  fi
 }
 
 if ! is_git_repo; then
@@ -86,7 +95,6 @@ if [[ "$INIT_ALLOWLIST" == "1" ]] && [[ ! -f "$ALLOW_FILE" ]]; then
 #
 # Gitignore-style patterns, but used as a WHITELIST for secretcheck.sh.
 # Any finding that originates from a matching path is treated as allowed.
-#
 # Use this ONLY for known false positives (e.g., docs/examples, test fixtures),
 # never for real secrets.
 #
@@ -94,9 +102,6 @@ if [[ "$INIT_ALLOWLIST" == "1" ]] && [[ ! -f "$ALLOW_FILE" ]]; then
 # docs/examples/keys.txt
 # test/fixtures/**
 # **/.env.example
-#
-# Tip:
-# Prefer narrow patterns (single file) over broad ones (whole folders).
 EOF
   echo "Created allowlist template: $ALLOW_FILE"
   echo
@@ -183,6 +188,7 @@ run_until_clean() {
   local raw_log="$3"
   local paths_all="$4"
   local paths_bad="$5"
+  local warning_msg="${6:-}"
 
   while true; do
     echo "==> $name"
@@ -217,6 +223,30 @@ run_until_clean() {
     fi
 
     echo "FAIL: $name (non-allowlisted findings)"
+
+    echo "---- last 80 lines of raw log: $raw_log ----"
+    python3 - "$raw_log" <<'PY' || true
+import sys, os
+log_path = sys.argv[1]
+if not os.path.exists(log_path): sys.exit(0)
+try:
+    with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()[-80:]
+    trunc = False
+    for line in lines:
+        line = line.rstrip('\n')
+        if len(line) > 300:
+            print(line[:300] + ' [TRUNCATED]')
+            trunc = True
+        else:
+            print(line)
+    if trunc:
+        print("\n[NOTICE] some long lines were truncated")
+except:
+    pass
+PY
+    echo "-------------------------------------------"
+
     echo "---- non-allowlisted paths: $paths_bad ----"
     cat "$paths_bad" || true
     echo "------------------------------------------"
@@ -235,16 +265,28 @@ PY
 
     suggest_allowlist "$paths_bad"
 
-    echo "---- last 80 lines of raw log: $raw_log ----"
-    tail -n 80 "$raw_log" || true
-    echo "-------------------------------------------"
+    if [[ -n "$warning_msg" ]]; then
+      echo "$warning_msg"
+      echo
+    fi
 
     if [[ "$FAIL_ALL" == "1" ]]; then
       echo "FAIL-ALL active -> aborting."
       exit 1
     fi
 
+    set +e
     pause_for_user
+    pause_rc=$?
+    set -e
+
+    if [[ $pause_rc -eq 2 ]]; then
+      echo "SKIPPING: $name (as requested by user)"
+      SKIPPED_ANY=1
+      echo
+      return 0
+    fi
+
     echo
   done
 }
@@ -260,7 +302,7 @@ GITLEAKS_BAD="$REPORT_DIR/gitleaks.paths_bad.txt"
 run_until_clean \
   "gitleaks (full history)" \
   "
-  gitleaks detect --source . --log-opts='--all' --redact --report-format json --report-path '$GITLEAKS_JSON' --verbose || true
+  gitleaks detect --source . --log-opts='--all' --redact --report-format json --report-path '$GITLEAKS_JSON' --verbose > '$GITLEAKS_LOG.tmp_raw' 2>&1 || true
 
   python3 - '$GITLEAKS_JSON' >'$GITLEAKS_ALL.tmp' 2>/dev/null <<'PY'
 import json, sys, os
@@ -285,21 +327,45 @@ for p in paths:
 print('\\n'.join(out))
 PY
 
-  python3 - '$GITLEAKS_ALL.tmp' '$ALLOW_FILE' >'$GITLEAKS_BAD.tmp' <<'PY'
-import sys, os, subprocess
-allfile, allow = sys.argv[1], sys.argv[2]
+  python3 - '$GITLEAKS_ALL.tmp' '$ALLOW_FILE' "$REPORT_DIR" >'$GITLEAKS_BAD.tmp' <<'PY'
+import sys, os
+allfile, allow, report_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 lines=[l.strip() for l in open(allfile,'r',encoding='utf-8',errors='ignore') if l.strip()]
 
 def allowlisted(path: str) -> bool:
-    if not allow or not os.path.isfile(allow):
-        return False
-    r=subprocess.run(['git','check-ignore','--no-index','--exclude-from',allow,'--',path],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return r.returncode==0
+    if report_dir and path.startswith(report_dir): return True
+    if not allow or not os.path.isfile(allow): return False
+    import fnmatch
+    with open(allow, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            pat = line.strip()
+            if not pat or pat.startswith('#'): continue
+            if fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path, pat.rstrip('/') + '/*'):
+                return True
+    return False
 
 bad=[p for p in lines if not allowlisted(p)]
-print('\\n'.join(bad))
+if bad: print('\\n'.join(bad), end='')
 PY
+
+  python3 - '$GITLEAKS_LOG.tmp_raw' '$GITLEAKS_BAD.tmp' <<'PY'
+import sys, os
+log, bad_f = sys.argv[1], sys.argv[2]
+bad_set = set([l.strip() for l in open(bad_f, encoding='utf-8', errors='ignore') if l.strip()]) if os.path.exists(bad_f) else set()
+if not os.path.exists(log): sys.exit(0)
+with open(log, 'r', encoding='utf-8', errors='ignore') as f:
+    blocks = f.read().split('\n\n')
+    for b in blocks:
+        if 'Finding:' in b:
+            path = None
+            for ln in b.splitlines():
+                if ln.strip().startswith('File:'):
+                    path = ln.split(':', 1)[1].strip()
+                    break
+            if path and path not in bad_set: continue
+        print(b + '\n')
+PY
+rm -f '$GITLEAKS_LOG.tmp_raw'
 
   python3 - '$GITLEAKS_JSON' <<'PY'
 import json, sys, os
@@ -312,10 +378,7 @@ except Exception:
     sys.exit(0)
 sys.exit(1 if isinstance(d,list) and len(d)>0 else 0)
 PY
-  " \
-  "$GITLEAKS_LOG" \
-  "$GITLEAKS_ALL" \
-  "$GITLEAKS_BAD"
+  " "$GITLEAKS_LOG" "$GITLEAKS_ALL" "$GITLEAKS_BAD"
 
 # --------------------------------------------------
 # Step 2: trufflehog (git history)
@@ -359,20 +422,48 @@ for x in paths:
 print('\\n'.join(out))
 PY
 
-    python3 - '$TRUFFLEHOG_ALL.tmp' '$ALLOW_FILE' >'$TRUFFLEHOG_BAD.tmp' <<'PY'
-import sys, os, subprocess
-allfile, allow = sys.argv[1], sys.argv[2]
+    python3 - '$TRUFFLEHOG_ALL.tmp' '$ALLOW_FILE' "$REPORT_DIR" >'$TRUFFLEHOG_BAD.tmp' <<'PY'
+import sys, os
+allfile, allow, report_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 lines=[l.strip() for l in open(allfile,'r',encoding='utf-8',errors='ignore') if l.strip()]
 
 def allowlisted(path: str) -> bool:
-    if not allow or not os.path.isfile(allow):
-        return False
-    r=subprocess.run(['git','check-ignore','--no-index','--exclude-from',allow,'--',path],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return r.returncode==0
+    if report_dir and path.startswith(report_dir): return True
+    if not allow or not os.path.isfile(allow): return False
+    import fnmatch
+    with open(allow, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            pat = line.strip()
+            if not pat or pat.startswith('#'): continue
+            if fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path, pat.rstrip('/') + '/*'):
+                return True
+    return False
 
 bad=[p for p in lines if not allowlisted(p)]
-print('\\n'.join(bad))
+if bad: print('\\n'.join(bad), end='')
+PY
+
+    python3 - '$TRUFFLEHOG_JSONL' '$TRUFFLEHOG_BAD.tmp' <<'PY'
+import sys, os, json
+jsonl, bad_f = sys.argv[1], sys.argv[2]
+bad_set = set([l.strip() for l in open(bad_f, encoding='utf-8', errors='ignore') if l.strip()]) if os.path.exists(bad_f) else set()
+if not os.path.exists(jsonl): sys.exit(0)
+with open(jsonl, 'r', encoding='utf-8', errors='ignore') as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try:
+            o = json.loads(line)
+        except: continue
+        sm = o.get('SourceMetadata') or {}
+        data = sm.get('Data') or {}
+        git = data.get('Git') or {}
+        path = git.get('File') or git.get('file') or data.get('File') or data.get('file') or o.get('path')
+        if path and path in bad_set:
+            print(f'Finding in:  {path}')
+            print('Raw:         ' + str(o.get('Raw', o.get('raw', '')))[:100] + '...')
+            print('Commit:      ' + str(git.get('Commit') or ''))
+            print()
 PY
 
     python3 - '$TRUFFLEHOG_JSONL' <<'PY'
@@ -386,10 +477,7 @@ with open(p,'r',encoding='utf-8',errors='ignore') as f:
             sys.exit(1)
 sys.exit(0)
 PY
-    " \
-    "$TRUFFLEHOG_LOG" \
-    "$TRUFFLEHOG_ALL" \
-    "$TRUFFLEHOG_BAD"
+    " "$TRUFFLEHOG_LOG" "$TRUFFLEHOG_ALL" "$TRUFFLEHOG_BAD"
 else
   echo "SKIP: trufflehog"
   echo
@@ -411,11 +499,11 @@ else
     "bonus grep (working tree obvious patterns)" \
     "
     set +e
-    git grep -nEi \"(api[_-]?key|secret|token|passwd|password|private[_-]?key|BEGIN (RSA|OPENSSH) PRIVATE KEY)\" >'$BONUS_GREP_LOG' 2>&1
+    git grep -nEi \"(api[_-]?key|secret|token|passwd|password|private[_-]?key|BEGIN (RSA|OPENSSH) PRIVATE KEY)\" >'$BONUS_GREP_LOG.tmp_raw' 2>&1
     rc=\$?
     set -e
 
-    python3 - '$BONUS_GREP_LOG' >'$BONUS_GREP_ALL.tmp' <<'PY'
+    python3 - '$BONUS_GREP_LOG.tmp_raw' >'$BONUS_GREP_ALL.tmp' <<'PY'
 import sys, os
 p=sys.argv[1]
 if not os.path.isfile(p):
@@ -435,27 +523,44 @@ for x in paths:
 print('\\n'.join(out))
 PY
 
-    python3 - '$BONUS_GREP_ALL.tmp' '$ALLOW_FILE' >'$BONUS_GREP_BAD.tmp' <<'PY'
-import sys, os, subprocess
-allfile, allow = sys.argv[1], sys.argv[2]
+    python3 - '$BONUS_GREP_ALL.tmp' '$ALLOW_FILE' "$REPORT_DIR" >'$BONUS_GREP_BAD.tmp' <<'PY'
+import sys, os
+allfile, allow, report_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 lines=[l.strip() for l in open(allfile,'r',encoding='utf-8',errors='ignore') if l.strip()]
 
 def allowlisted(path: str) -> bool:
-    if not allow or not os.path.isfile(allow):
-        return False
-    r=subprocess.run(['git','check-ignore','--no-index','--exclude-from',allow,'--',path],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return r.returncode==0
+    if report_dir and path.startswith(report_dir): return True
+    if not allow or not os.path.isfile(allow): return False
+    import fnmatch
+    with open(allow, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            pat = line.strip()
+            if not pat or pat.startswith('#'): continue
+            if fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path, pat.rstrip('/') + '/*'):
+                return True
+    return False
 
 bad=[p for p in lines if not allowlisted(p)]
-print('\\n'.join(bad))
+if bad: print('\\n'.join(bad), end='')
 PY
 
+    python3 - '$BONUS_GREP_LOG.tmp_raw' '$BONUS_GREP_BAD.tmp' <<'PY'
+import sys, os
+log, bad_f = sys.argv[1], sys.argv[2]
+bad_set = set([l.strip() for l in open(bad_f, encoding='utf-8', errors='ignore') if l.strip()]) if os.path.exists(bad_f) else set()
+if not os.path.exists(log): sys.exit(0)
+with open(log, 'r', encoding='utf-8', errors='ignore') as f:
+    for line in f:
+        if ':' in line:
+            path = line.split(':', 1)[0].strip()
+            if path in bad_set:
+                print(line, end='')
+PY
+rm -f '$BONUS_GREP_LOG.tmp_raw'
+
     if [[ \$rc -eq 1 ]]; then exit 0; else exit 1; fi
-    " \
-    "$BONUS_GREP_LOG" \
-    "$BONUS_GREP_ALL" \
-    "$BONUS_GREP_BAD"
+    " "$BONUS_GREP_LOG" "$BONUS_GREP_ALL" "$BONUS_GREP_BAD" \
+    "NOTE: Bonus checks often produce many false positives. They can be helpful but require manual review."
 
   # Step 4: risky filetypes ever in history
   BONUS_TYPES_LOG="$REPORT_DIR/bonus_history_filetypes.log"
@@ -469,11 +574,11 @@ PY
     git rev-list --all | while read -r c; do
       git show \"\$c\" --name-only --pretty=format: 2>/dev/null
       echo
-    done | grep -nEi \"\\.(env|pem|p12|pfx|key|kdb|keystore)\$\" >'$BONUS_TYPES_LOG' 2>&1
+    done | grep -nEi \"\\.(env|pem|p12|pfx|key|kdb|keystore)\$\" >'$BONUS_TYPES_LOG.tmp_raw' 2>&1
     rc=\$?
     set -e
 
-    python3 - '$BONUS_TYPES_LOG' >'$BONUS_TYPES_ALL.tmp' <<'PY'
+    python3 - '$BONUS_TYPES_LOG.tmp_raw' >'$BONUS_TYPES_ALL.tmp' <<'PY'
 import sys, os
 p=sys.argv[1]
 if not os.path.isfile(p):
@@ -494,28 +599,37 @@ for x in paths:
 print('\\n'.join(out))
 PY
 
-    python3 - '$BONUS_TYPES_ALL.tmp' '$ALLOW_FILE' >'$BONUS_TYPES_BAD.tmp' <<'PY'
-import sys, os, subprocess
-allfile, allow = sys.argv[1], sys.argv[2]
+    python3 - '$BONUS_TYPES_ALL.tmp' '$ALLOW_FILE' "$REPORT_DIR" >'$BONUS_TYPES_BAD.tmp' <<'PY'
+import sys, os
+allfile, allow, report_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 lines=[l.strip() for l in open(allfile,'r',encoding='utf-8',errors='ignore') if l.strip()]
 
 def allowlisted(path: str) -> bool:
-    if not allow or not os.path.isfile(allow):
-        return False
-    r=subprocess.run(['git','check-ignore','--no-index','--exclude-from',allow,'--',path],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return r.returncode==0
+    if report_dir and path.startswith(report_dir): return True
+    if not allow or not os.path.isfile(allow): return False
+    import fnmatch
+    with open(allow, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            pat = line.strip()
+            if not pat or pat.startswith('#'): continue
+            if fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path, pat.rstrip('/') + '/*'):
+                return True
+    return False
 
 bad=[p for p in lines if not allowlisted(p)]
-print('\\n'.join(bad))
+if bad: print('\\n'.join(bad), end='')
 PY
 
     if [[ \$rc -eq 1 ]]; then exit 0; else exit 1; fi
-    " \
-    "$BONUS_TYPES_LOG" \
-    "$BONUS_TYPES_ALL" \
-    "$BONUS_TYPES_BAD"
+    " "$BONUS_TYPES_LOG" "$BONUS_TYPES_ALL" "$BONUS_TYPES_BAD" \
+    "NOTE: Bonus checks often produce many false positives. They can be helpful but require manual review."
 fi
 
-echo "✅ ALL CHECKS CLEAN (or allowlisted)"
-echo "Reports saved in: $REPORT_DIR"
+if [[ "$SKIPPED_ANY" == "1" ]]; then
+  echo "⚠️ SOME CHECKS HAVE FAILED (see above)"
+  echo "Reports saved in: $REPORT_DIR"
+  exit 1
+else
+  echo "✅ ALL CHECKS CLEAN (or allowlisted)"
+  echo "Reports saved in: $REPORT_DIR"
+fi
