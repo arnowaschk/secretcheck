@@ -1,6 +1,6 @@
-# SecretCheck 🤫
+# SecretCheck
 
-Let's be honest: we've all been there. It's late, the coffee is cold, and you just want to push that one "tiny" fix. Suddenly, your AWS keys or that super-secret database password are out in the wild, waving hello to the entire internet. 😱
+Let's be honest: we've all been there. It's late, the coffee is cold, and you just want to push that one "tiny" fix. Suddenly, your AWS keys or that super-secret database password are out in the wild, waving hello to the entire internet.
 
 Humans are wonderfully fallible, but Git history is forever. **SecretCheck** is here to be your last line of defense—that slightly paranoid friend who double-checks your pockets before you leave the house.
 
@@ -45,4 +45,4 @@ If SecretCheck just saved you from a frantic API key rotation at 3 AM, maybe it'
 
 But honestly? Just **saying hello** or giving some feedback is even better! It's always nice to know that this slightly paranoid tool is actually out there helping someone. 🙂
 
-Or found a bug, or have an idea? Open an issue or a PR! 🚀
+Or found a bug, or have an idea? Open an issue or a PR!
