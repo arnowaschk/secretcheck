@@ -39,10 +39,10 @@ secretcheck.sh
 
 Create a file named `.secretcheck_allowed` in your repo root. You can use gitignore-style patterns (like `tests/data/**` or `config/dummy_keys.json`) to tell SecretCheck: "I know about this file(s), I know for sure it's not a real danger, stop yelling at me."
 
-## Buy me a coffee? ☕
+## Support & Feedback ☕
 
-If this script saved you from a frantic API key rotation at 3 AM or a difficult conversation with your security team, I've done my job!
+If SecretCheck just saved you from a frantic API key rotation at 3 AM, maybe it's worth a small karma bonus? I'd be happy about a [digital coffee](https://buymeacoffee.com/arnwas) to help keep the paranoia high and the bugs low.
 
-Feel free to buy me a coffee to keep the paranoia high and the bugs low. Or, even better—just **say hello!** A friendly "hi" is often the best kind of pull request. 🙂
+But honestly? Just **saying hello** or giving some feedback is even better! It's always nice to know that this slightly paranoid tool is actually out there helping someone. 🙂
 
-Stay secure!
+Or found a bug, or have an idea? Open an issue or a PR! 🚀
