@@ -23,7 +23,7 @@ secretcheck.sh
 
 ### Options
 
-* `--bonus`: Opt-in to the "Bonus checks". These are keyword-based and filetype-based scans. Warning: They are a bit loud and might find things like "password" in your documentation, but better safe than sorry!
+* `--bonus`: Opt-in to the "Bonus checks". These are templates for your own custom rules. We even added `your_own_secret` to the default search patterns to show you where to edit. By default, they search for generic keywords ("password") and risky filetypes (`.env`), but you are encouraged to edit the script and add specific patterns for your project (e.g., `GOOGLE_TK`, `INTERNAL_API_TOKEN`, `MY_HIDDEN_GEM` etc.).
 * `--fail-all`: Perfect for CI/CD. The script will non-interactively fail and exit at the first sign of trouble.
 * `--init-allowlist`: Creates a template `.secretcheck_allowed` file for you to start ignoring those annoying false positives.
 * `--help`: Shows the help message.
@@ -37,12 +37,12 @@ secretcheck.sh
 
 ## The Allowlist (.secretcheck_allowed)
 
-Create a file named `.secretcheck_allowed` in your repo root. You can use gitignore-style patterns (like `tests/data/**` or `config/dummy_keys.json`) to tell SecretCheck: "I know about this file(s), I know for sure it's not a real danger, stop yelling at me."
+Create a file named `.secretcheck_allowed` in your repo root. You can use glob patterns (fnmatch, like `tests/data/**` or `config/dummy_keys.json`) to tell SecretCheck: "I know about this file(s), I know for sure it's not a real danger, stop yelling at me."
 
 ## Support & Feedback ☕
 
 If SecretCheck just saved you from a frantic API key rotation at 3 AM, maybe it's worth a small karma bonus? I'd be happy about a [digital coffee](https://buymeacoffee.com/arnwas) to help keep the paranoia high and the bugs low.
 
-But honestly? Just **saying hello** or giving some feedback is even better! It's always nice to know that this slightly paranoid tool is actually out there helping someone. 🙂
+But honestly? Just **saying hello** or giving some feedback is even better! It's always nice to know that this slightly paranoid tool is actually out there helping someone.
 
 Or found a bug, or have an idea? Open an issue or a PR!
