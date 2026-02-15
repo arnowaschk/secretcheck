@@ -1,35 +1,67 @@
 #!/bin/bash
 set -u
 
+# Enhanced test suite for secretcheck
+# Tests basic functionality plus edge cases
+
 # Path to the script under test
 SC_PATH="$(pwd)/secretcheck.sh"
-TEST_DIR="/tmp/secretcheck_test_env"
 
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo "Starting secretcheck integration tests..."
+
+# Use mktemp for test directory
+TEST_DIR=$(mktemp -d -t secretcheck_test.XXXXXX)
 
 cleanup() {
     rm -rf "$TEST_DIR"
 }
 trap cleanup EXIT
 
-# 0. Test Operational Error (Run outside git repo)
-echo "Test 0: Operational Error (non-git repo)"
+# Test counter
+TESTS_RUN=0
+TESTS_PASSED=0
+
+run_test() {
+    local test_name="$1"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    echo -e "${YELLOW}Test $TESTS_RUN: $test_name${NC}"
+}
+
+pass_test() {
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    echo -e "${GREEN}PASS${NC}"
+    echo
+}
+
+fail_test() {
+    local expected="$1"
+    local got="$2"
+    echo -e "${RED}FAIL: Expected exit $expected, got $got${NC}"
+    exit 1
+}
+
+# ============================================================================
+# Test 0: Operational Error (Run outside git repo)
+# ============================================================================
+run_test "Operational Error (non-git repo)"
 mkdir -p "$TEST_DIR/no_git"
 cd "$TEST_DIR/no_git"
 "$SC_PATH" --fail-all >/dev/null 2>&1
 rc=$?
 if [[ $rc -ne 2 ]]; then
-    echo -e "${RED}FAIL: Expected exit 2 for non-git repo, got $rc${NC}"
-    exit 1
+    fail_test 2 $rc
 fi
-echo -e "${GREEN}PASS: Operational error caught correctly${NC}"
+pass_test
 
+# ============================================================================
 # Setup test repo
+# ============================================================================
 echo "Preparing test repo in $TEST_DIR..."
 mkdir -p "$TEST_DIR/repo"
 cd "$TEST_DIR/repo"
@@ -37,49 +69,67 @@ git init -q
 git config user.email "test@example.com"
 git config user.name "Test User"
 
-# 1. Test Clean Repo
-echo "Test 1: Clean repo"
+# ============================================================================
+# Test 1: Clean Repo
+# ============================================================================
+run_test "Clean repo"
 "$SC_PATH" --fail-all
 rc=$?
 if [[ $rc -ne 0 ]]; then
-    echo -e "${RED}FAIL: Clean repo should return 0, got $rc${NC}"
-    exit 1
+    fail_test 0 $rc
 fi
-echo -e "${GREEN}PASS: Clean repo${NC}"
+pass_test
 
-# 2. Test Finding Detection (Gitleaks)
-echo "Test 2: Gitleaks finding"
+# ============================================================================
+# Test 2: Finding Detection (Gitleaks)
+# ============================================================================
+run_test "Gitleaks finding"
 echo "aws_access_key_id=AKIA1234567890123456" > aws_key.txt
 git add aws_key.txt
 git commit -m "add key" -q
 "$SC_PATH" --fail-all >/dev/null 2>&1
 rc=$?
 if [[ $rc -ne 1 ]]; then
-    echo -e "${RED}FAIL: Expected exit 1 for secret finding, got $rc${NC}"
-    exit 1
+    fail_test 1 $rc
 fi
-echo -e "${GREEN}PASS: Finding detected${NC}"
+pass_test
 
-# 3. Test Allowlist
-echo "Test 3: Allowlist"
+# ============================================================================
+# Test 3: Allowlist
+# ============================================================================
+run_test "Allowlist"
 echo "aws_key.txt" > .secretcheck_allowed
 "$SC_PATH" --fail-all
 rc=$?
 if [[ $rc -ne 0 ]]; then
-    echo -e "${RED}FAIL: Allowlist should result in exit 0, got $rc${NC}"
-    exit 1
+    fail_test 0 $rc
 fi
-echo -e "${GREEN}PASS: Allowlist works${NC}"
+pass_test
 
-# 4. Test Bonus Check & Log Safety
-echo "Test 4: Bonus check ('your_own_secret') & Log safety"
+# ============================================================================
+# Test 4: Inline Comments in Allowlist
+# ============================================================================
+run_test "Inline comments in allowlist"
+echo "custom.txt  # This is a test file" >> .secretcheck_allowed
 echo "my_val=your_own_secret" > custom.txt
 git add custom.txt
+git commit -m "add custom" -q
+"$SC_PATH" --fail-all --bonus >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 5: Bonus Check & Log Safety
+# ============================================================================
+run_test "Bonus check ('your_own_secret') & Log safety"
+rm .secretcheck_allowed
 "$SC_PATH" --fail-all --bonus >/dev/null 2>&1
 rc=$?
 if [[ $rc -ne 1 ]]; then
-    echo -e "${RED}FAIL: Expected exit 1 for bonus finding, got $rc${NC}"
-    exit 1
+    fail_test 1 $rc
 fi
 
 # Verify log safety (should not contain the secret string)
@@ -89,19 +139,153 @@ if [[ -f .secretcheck/bonus_grep.log.tmp_raw ]]; then
         exit 1
     fi
 fi
-echo "PASS: Bonus check detected and log is safe (filenames only)"
+pass_test
 
-# 5. Test Bonus Filetype
-echo "Test 5: Bonus filetype (.env)"
+# ============================================================================
+# Test 6: Bonus Filetype
+# ============================================================================
+run_test "Bonus filetype (.env)"
 echo "SECRET_KEY=123" > .env
 git add .env
 git commit -m "add risky file" -q
 "$SC_PATH" --fail-all --bonus >/dev/null 2>&1
 rc=$?
 if [[ $rc -ne 1 ]]; then
-    echo -e "${RED}FAIL: Expected exit 1 for bonus filetype (.env), got $rc${NC}"
+    fail_test 1 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 7: Exclude Patterns
+# ============================================================================
+run_test "Exclude patterns"
+"$SC_PATH" --fail-all --bonus --exclude "*.env" --exclude "custom.txt" --exclude "aws_key.txt" >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 8: Dry Run Mode
+# ============================================================================
+run_test "Dry run mode"
+rm -rf .secretcheck
+"$SC_PATH" --dry-run --bonus >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+# Verify no reports were created in dry run
+if [[ -f .secretcheck/gitleaks.json ]]; then
+    echo -e "${RED}FAIL: Reports created in dry-run mode!${NC}"
     exit 1
 fi
-echo -e "${GREEN}PASS: Bonus filetype found (.env)${NC}"
+pass_test
 
-echo -e "\n${GREEN}ALL INTEGRATION TESTS PASSED SUCCESSFULLY${NC}"
+# ============================================================================
+# Test 9: Help and Version Flags
+# ============================================================================
+run_test "Help flag"
+"$SC_PATH" --help >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+run_test "Version flag"
+"$SC_PATH" --version >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 10: Unicode Filenames
+# ============================================================================
+run_test "Unicode filename handling"
+echo "secret=test123" > "tëst_fïlé.txt"
+git add "tëst_fïlé.txt"
+git commit -m "add unicode file" -q
+echo "aws_key.txt" > .secretcheck_allowed
+echo "custom.txt" >> .secretcheck_allowed
+echo ".env" >> .secretcheck_allowed
+echo "tëst_fïlé.txt" >> .secretcheck_allowed
+"$SC_PATH" --fail-all --bonus >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 11: Custom patterns.yml
+# ============================================================================
+run_test "Custom patterns.yml"
+cat > patterns.yml <<'EOF'
+bonus_grep_patterns:
+  - "CUSTOM_SECRET"
+
+bonus_filetype_patterns:
+  - "\\.secret"
+
+exclude_patterns:
+  - "*.env"
+
+settings:
+  log_tail_lines: 50
+  max_line_length: 200
+EOF
+
+echo "CUSTOM_SECRET=abc123" > test_custom.txt
+git add test_custom.txt
+git commit -m "add custom secret" -q
+"$SC_PATH" --fail-all --bonus >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 1 ]]; then
+    fail_test 1 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 12: Empty Repository
+# ============================================================================
+run_test "Empty repository"
+cd "$TEST_DIR"
+mkdir -p empty_repo
+cd empty_repo
+git init -q
+git config user.email "test@example.com"
+git config user.name "Test User"
+"$SC_PATH" --fail-all >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 13: Detached HEAD State
+# ============================================================================
+run_test "Detached HEAD state"
+cd "$TEST_DIR/repo"
+rm -f .secretcheck_allowed
+git checkout HEAD~1 -q 2>/dev/null || git checkout HEAD -q
+"$SC_PATH" --fail-all >/dev/null 2>&1
+rc=$?
+# Should still work, just with a warning
+if [[ $rc -ne 1 ]]; then  # Still has findings from earlier tests
+    fail_test 1 $rc
+fi
+git checkout main -q 2>/dev/null || git checkout master -q 2>/dev/null || true
+pass_test
+
+# ============================================================================
+# Summary
+# ============================================================================
+echo
+echo "========================================"
+echo -e "${GREEN}ALL TESTS PASSED: $TESTS_PASSED/$TESTS_RUN${NC}"
+echo "========================================"

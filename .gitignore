@@ -1,2 +1,20 @@
-.secretcheck
-.secretcheck_allowed
+# SecretCheck reports directory
+.secretcheck/
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.log
+.*.tmp
