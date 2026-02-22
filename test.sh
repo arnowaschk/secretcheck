@@ -273,13 +273,153 @@ run_test "Detached HEAD state"
 cd "$TEST_DIR/repo"
 rm -f .secretcheck_allowed
 git checkout HEAD~1 -q 2>/dev/null || git checkout HEAD -q
-"$SC_PATH" --fail-all >/dev/null 2>&1
+"$SC_PATH" --fail-all --no-color >/dev/null 2>&1
 rc=$?
 # Should still work, just with a warning
 if [[ $rc -ne 1 ]]; then  # Still has findings from earlier tests
     fail_test 1 $rc
 fi
 git checkout main -q 2>/dev/null || git checkout master -q 2>/dev/null || true
+pass_test
+
+# ============================================================================
+# Test 14: --no-color flag
+# ============================================================================
+run_test "--no-color flag"
+# Run and check that no ANSI escape codes are in the output
+output=$("$SC_PATH" --no-color --help 2>&1)
+if echo "$output" | grep -q $'\e'; then
+    echo -e "${RED}FAIL: ANSI escape codes found in output with --no-color${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 15: --check-deps
+# ============================================================================
+run_test "--check-deps flag"
+"$SC_PATH" --check-deps >/dev/null 2>&1
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 16: --fast mode
+# ============================================================================
+run_test "--fast mode (incremental scan)"
+# Verify it logs FAST MODE in verbose
+# log_info now writes to stderr, so we must capture it
+output=$("$SC_PATH" --fast --verbose --fail-all 2>&1)
+if ! echo "$output" | grep -q "FAST MODE"; then
+    echo -e "${RED}FAIL: FAST MODE marker not found in output${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 17: --sarif report
+# ============================================================================
+run_test "--sarif report generation"
+rm -rf .secretcheck
+"$SC_PATH" --sarif --fail-all >/dev/null 2>&1
+if [[ ! -f .secretcheck/gitleaks.sarif ]]; then
+    echo -e "${RED}FAIL: SARIF report was not created${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 18: --init-allowlist
+# ============================================================================
+run_test "--init-allowlist flag"
+rm -f .secretcheck_allowed
+"$SC_PATH" --init-allowlist >/dev/null 2>&1
+if [[ ! -f .secretcheck_allowed ]]; then
+    echo -e "${RED}FAIL: .secretcheck_allowed was not created${NC}"
+    exit 1
+fi
+if ! grep -q "fnmatch" .secretcheck_allowed; then
+    echo -e "${RED}FAIL: Template content not found in .secretcheck_allowed${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 19: --quiet mode
+# ============================================================================
+run_test "--quiet mode"
+# Clear findings or use a clean repo
+cd "$TEST_DIR"
+mkdir -p quiet_test
+cd quiet_test
+git init -q
+# Use a file for capture to avoid potential subshell hang issues
+TMP_OUT=$(mktemp)
+echo "DEBUG: Running quiet test..."
+"$SC_PATH" --quiet --fail-all >"$TMP_OUT" 2>&1
+rc=$?
+output=$(cat "$TMP_OUT")
+rm -f "$TMP_OUT"
+if [[ -n "$output" ]]; then
+    echo -e "${RED}FAIL: Quiet mode produced output: $output${NC}"
+    exit 1
+fi
+if [[ $rc -ne 0 ]]; then
+    fail_test 0 $rc
+fi
+pass_test
+
+# ============================================================================
+# Test 20: --verbose mode
+# ============================================================================
+run_test "--verbose mode"
+output=$("$SC_PATH" --verbose --fail-all 2>&1)
+if ! echo "$output" | grep -q "VERBOSE"; then
+    echo -e "${RED}FAIL: Verbose output missing [VERBOSE] markers${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 21: --install-hook (n confirmation)
+# ============================================================================
+run_test "--install-hook (decline)"
+rm -f .git/hooks/pre-commit
+echo "n" | "$SC_PATH" --install-hook >/dev/null 2>&1
+if [[ -f .git/hooks/pre-commit ]]; then
+    echo -e "${RED}FAIL: Hook created despite declining${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 22: --install-hook (y confirmation)
+# ============================================================================
+run_test "--install-hook (accept)"
+echo "y" | "$SC_PATH" --install-hook >/dev/null 2>&1
+if [[ ! -f .git/hooks/pre-commit ]]; then
+    echo -e "${RED}FAIL: Hook not created after accepting${NC}"
+    exit 1
+fi
+if [[ ! -x .git/hooks/pre-commit ]]; then
+    echo -e "${RED}FAIL: Hook is not executable${NC}"
+    exit 1
+fi
+pass_test
+
+# ============================================================================
+# Test 23: --update (check only)
+# ============================================================================
+run_test "--update flag (dry run/check only)"
+# We can't easily test actual download without network, but we check if it triggers
+echo "n" | "$SC_PATH" --update 2>&1 | grep -q "Checking for updates"
+rc=$?
+if [[ $rc -ne 0 ]]; then
+    echo -e "${RED}FAIL: --update didn't trigger update check${NC}"
+    exit 1
+fi
 pass_test
 
 # ============================================================================
