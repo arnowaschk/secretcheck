@@ -9,7 +9,7 @@
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/arnowaschk/secretcheck/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/arnowaschk/secretcheck/releases)
 
 Let's be honest: we've all been there. It's late, the coffee is cold, and you just want to push that one "tiny" fix. Suddenly, your AWS keys or that super-secret database password are out in the wild, waving hello to the entire internet. Everyone knows that this must not happen, but it does. People are rushing, they have dozens of small projects in parallel, or they overlook when their AI is doing sloppy things.
 
@@ -341,6 +341,11 @@ If you discover a security vulnerability in SecretCheck itself:
 MIT License - Copyright (c) 2026 Arno Waschk. See the repository's `LICENSE` file for full text.
 
 ## Changelog
+
+### [1.0.2] - 2026-02-22
+
+- **Improved Displaying**: Added commit-relative line number clarification to reports to reduce confusion for findings in history.
+- **Improved Test Suite**: Expanded test coverage to 25 comprehensive integration tests.
 
 ### [1.0.1] - 2026-02-15
 
