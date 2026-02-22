@@ -184,7 +184,7 @@ fi
 # ============================================================================
 
 
-die() { echo -e "${RED}ERROR: $*${NC}" >&2; exit 2; }
+die() { echo -e "${RED}ERROR: $*${NC}" >&2; log_support_info; exit 2; }
 is_git_repo() { git rev-parse --is-inside-work-tree >/dev/null 2>&1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -194,6 +194,11 @@ log_verbose() {
 
 log_info() {
   [[ "$QUIET" != "1" ]] && echo -e "$*" >&3 || true
+}
+
+log_support_info() {
+  # Always print this to stderr if not quiet, regardless of result
+  [[ "$QUIET" != "1" ]] && echo -e "\nIf you found this tool useful, consider buying me a coffee: ${BLUE}${BOLD}https://buymeacoffee.com/arnwas${NC}" >&2 || true
 }
 
 log_progress() {
@@ -410,6 +415,7 @@ pause_for_user() {
   elif [[ "$ans" == "skip" ]]; then
     return 2
   else
+    log_support_info
     exit 3
   fi
 }
@@ -1143,8 +1149,10 @@ fi
 if [[ "$SKIPPED_ANY" == "1" ]]; then
   log_info "⚠️  SOME CHECKS HAVE FAILED (see above)"
   log_info "Reports saved in: $REPORT_DIR"
+  log_support_info
   exit 1
 else
   log_info "✅ ALL CHECKS CLEAN (or allowlisted)"
   log_info "Reports saved in: $REPORT_DIR"
+  log_support_info
 fi
