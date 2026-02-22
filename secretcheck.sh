@@ -2,6 +2,7 @@
 set -euo pipefail
 
 VERSION="1.0.1"
+exec 3>&2
 
 # ============================================================================
 # Configuration Constants
@@ -188,19 +189,19 @@ is_git_repo() { git rev-parse --is-inside-work-tree >/dev/null 2>&1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 log_verbose() {
-  [[ "$VERBOSE" == "1" ]] && echo -e "${BLUE}[VERBOSE] $*${NC}" >&2 || true
+  [[ "$VERBOSE" == "1" ]] && echo -e "${BLUE}[VERBOSE] $*${NC}" >&3 || true
 }
 
 log_info() {
-  [[ "$QUIET" != "1" ]] && echo -e "$*" || true
+  [[ "$QUIET" != "1" ]] && echo -e "$*" >&3 || true
 }
 
 log_progress() {
-  [[ "$QUIET" != "1" ]] && [[ "$DRY_RUN" != "1" ]] && echo -ne "${BLUE}$*${NC}" >&2 || true
+  [[ "$QUIET" != "1" ]] && [[ "$DRY_RUN" != "1" ]] && echo -ne "${BLUE}$*${NC}" >&3 || true
 }
 
 log_progress_done() {
-  [[ "$QUIET" != "1" ]] && [[ "$DRY_RUN" != "1" ]] && echo -e " ${GREEN}done${NC}" >&2 || true
+  [[ "$QUIET" != "1" ]] && [[ "$DRY_RUN" != "1" ]] && echo -e " ${GREEN}done${NC}" >&3 || true
 }
 
 # Check Python version
@@ -459,6 +460,7 @@ if [[ "$INIT_ALLOWLIST" == "1" ]] && [[ ! -f "$ALLOW_FILE" ]]; then
 EOF
   log_info "Created allowlist template: $ALLOW_FILE"
   log_info ""
+  exit 0
 fi
 
 # Display configuration
@@ -559,6 +561,12 @@ if [[ "${INSTALL_HOOK:-0}" == "1" ]]; then
   HOOK_FILE=".git/hooks/pre-commit"
   if [[ -f "$HOOK_FILE" ]]; then
     read -r -p "Hook already exists at $HOOK_FILE. Overwrite? [y/N] " ans
+    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+      log_info "Aborting hook installation."
+      exit 0
+    fi
+  else
+    read -r -p "Install pre-commit hook to $HOOK_FILE? [y/N] " ans
     if [[ ! "$ans" =~ ^[Yy]$ ]]; then
       log_info "Aborting hook installation."
       exit 0
@@ -783,6 +791,9 @@ except:
     pass
 PY
     log_info "-------------------------------------------"
+    log_info "${YELLOW}NOTE: Line numbers and file contents above are relative to the specific COMMIT ID reported.${NC}"
+    log_info "${YELLOW}Historical findings remain in history even if the current version of the file is clean.${NC}"
+    log_info ""
 
     log_info "---- non-allowlisted paths: $paths_bad ----"
     cat "$paths_bad" || true
