@@ -112,7 +112,7 @@ EOF
 
 show_version() {
   echo "SecretCheck version $VERSION"
-  echo "Copyright (c) 2026 Arno Waschk"
+  echo "Copyright (c) 2026 Arno Waschk arno@arnow.solutions"
   echo "License: MIT"
 }
 
